@@ -1,21 +1,33 @@
 <?php
 
 
+interface Statement
+{
+    public function execute();
 
+    public function __toString(): string;
+}
 
-use Closure;
+interface Value
+{
+    public function asNumber(): float;
+
+    public function asString(): string;
+
+    public function __toString(): string;
+}
+
+interface Expression
+{
+    public function eval(): Value;
+
+    public function __toString(): string;
+}
 
 class Functions
 {
     /** @var array<string, Closure> */
     private static array $functions = [];
-
-    public static function isExists(string $key): bool
-    {
-        self::initFunctions();
-
-        return isset(self::$functions[$key]);
-    }
 
     public static function get(string $key): Closure
     {
@@ -26,13 +38,6 @@ class Functions
         }
 
         return self::$functions[$key];
-    }
-
-    public static function set(string $key, Closure $value)
-    {
-        self::initFunctions();
-
-        self::$functions[$key] = $value;
     }
 
     private static function initFunctions()
@@ -194,6 +199,20 @@ class Functions
             ];
         }
     }
+
+    public static function isExists(string $key): bool
+    {
+        self::initFunctions();
+
+        return isset(self::$functions[$key]);
+    }
+
+    public static function set(string $key, Closure $value)
+    {
+        self::initFunctions();
+
+        self::$functions[$key] = $value;
+    }
 }
 
 class FunctionStatement implements Statement
@@ -280,10 +299,6 @@ class NumberExpression implements Expression
     }
 }
 
-
-
-
-
 class Parser
 {
     private array $tokens;
@@ -315,6 +330,27 @@ class Parser
         }
 
         return $result;
+    }
+
+    private function match($tokenType): bool
+    {
+        $current = $this->peek(0);
+        if ($tokenType !== $current->getType()) {
+            return false;
+        }
+        $this->pos++;
+
+        return true;
+    }
+
+    private function peek(int $relativePos)
+    {
+        $pos = $this->pos + $relativePos;
+        if ($pos >= $this->size) {
+            return $this->eof;
+        }
+
+        return $this->tokens[$pos];
     }
 
     private function statement(): Statement
@@ -349,112 +385,6 @@ class Parser
         }
 
         return $this->assignStatement();
-    }
-
-    private function block(): Statement
-    {
-        $block = new BlockStatement();
-
-        $this->consume(TokenType::LBRACE);
-        while (!$this->match(TokenType::RBRACE)) {
-            $block->add($this->statement());
-        }
-
-        return $block;
-    }
-
-    private function assignStatement(): Statement
-    {
-        // IDENT EQ
-        $current = $this->peek(0);
-        if ($this->match(TokenType::IDENT) && $this->peek(0)->getType() == TokenType::EQ) {
-            $variable = $current->getText();
-            $this->consume(TokenType::EQ);
-
-            return new AssignmentStatement($variable, $this->expression());
-        }
-
-        throw new RoldException('Unknown statement');
-    }
-
-    private function ifStatement(): Statement
-    {
-        $condition = $this->expression();
-        $ifStatement = $this->statementOrBlock();
-        $elseStatement = null;
-        if ($this->match(TokenType::ELSE)) {
-            $elseStatement = $this->statementOrBlock();
-        }
-
-        return new IfStatement($condition, $ifStatement, $elseStatement);
-    }
-
-    private function whileStatement(): Statement
-    {
-        $condition = $this->expression();
-        $statement = $this->statementOrBlock();
-
-        return new WhileStatement($condition, $statement);
-    }
-
-    private function doWhileStatement(): Statement
-    {
-        $statement = $this->statementOrBlock();
-        $this->consume(TokenType::WHILE);
-        $condition = $this->expression();
-
-        return new DoWhileStatement($statement, $condition);
-    }
-
-    private function forStatement(): Statement
-    {
-        $initialization = $this->assignStatement();
-        $this->consume(TokenType::SEMICOLON);
-        $condition = $this->expression();
-        $this->consume(TokenType::SEMICOLON);
-        $increment = $this->assignStatement();
-        $statement = $this->statementOrBlock();
-
-        return new ForStatement($initialization, $condition, $increment, $statement);
-    }
-
-    private function statementOrBlock(): Statement
-    {
-        if ($this->peek(0)->getType() == TokenType::LBRACE) {
-            return $this->block();
-        }
-
-        return $this->statement();
-    }
-
-    private function userFunctionStatement(): Statement
-    {
-        $name = $this->consume(TokenType::IDENT)->getText();
-        $this->consume(TokenType::LPAREN);
-        $argNames = [];
-
-        while (!$this->match(TokenType::RPAREN)) {
-            $argNames[] = $this->consume(TokenType::IDENT)->getText();
-            $this->match(TokenType::COMMA);
-        }
-
-        $body = $this->statementOrBlock();
-
-        return new UserFunctionStatement($name, $argNames, $body);
-    }
-
-    private function function(): FunctionExpression
-    {
-        $name = $this->consume(TokenType::IDENT)->getText();
-        $this->consume(TokenType::LPAREN);
-
-        $args = [];
-        while (!$this->match(TokenType::RPAREN)) {
-            $args[] = $this->expression();
-            $this->match(TokenType::COMMA);
-        }
-
-        return new FunctionExpression($name, $args);
     }
 
     private function expression(): Expression
@@ -609,25 +539,18 @@ class Parser
         throw new RoldException('Unknown expression');
     }
 
-    private function peek(int $relativePos)
+    private function function (): FunctionExpression
     {
-        $pos = $this->pos + $relativePos;
-        if ($pos >= $this->size) {
-            return $this->eof;
+        $name = $this->consume(TokenType::IDENT)->getText();
+        $this->consume(TokenType::LPAREN);
+
+        $args = [];
+        while (!$this->match(TokenType::RPAREN)) {
+            $args[] = $this->expression();
+            $this->match(TokenType::COMMA);
         }
 
-        return $this->tokens[$pos];
-    }
-
-    private function match($tokenType): bool
-    {
-        $current = $this->peek(0);
-        if ($tokenType !== $current->getType()) {
-            return false;
-        }
-        $this->pos++;
-
-        return true;
+        return new FunctionExpression($name, $args);
     }
 
     private function consume($tokenType): Token
@@ -639,6 +562,98 @@ class Parser
         $this->pos++;
 
         return $current;
+    }
+
+    private function ifStatement(): Statement
+    {
+        $condition = $this->expression();
+        $ifStatement = $this->statementOrBlock();
+        $elseStatement = null;
+        if ($this->match(TokenType::ELSE)) {
+            $elseStatement = $this->statementOrBlock();
+        }
+
+        return new IfStatement($condition, $ifStatement, $elseStatement);
+    }
+
+    private function statementOrBlock(): Statement
+    {
+        if ($this->peek(0)->getType() == TokenType::LBRACE) {
+            return $this->block();
+        }
+
+        return $this->statement();
+    }
+
+    private function block(): Statement
+    {
+        $block = new BlockStatement();
+
+        $this->consume(TokenType::LBRACE);
+        while (!$this->match(TokenType::RBRACE)) {
+            $block->add($this->statement());
+        }
+
+        return $block;
+    }
+
+    private function whileStatement(): Statement
+    {
+        $condition = $this->expression();
+        $statement = $this->statementOrBlock();
+
+        return new WhileStatement($condition, $statement);
+    }
+
+    private function forStatement(): Statement
+    {
+        $initialization = $this->assignStatement();
+        $this->consume(TokenType::SEMICOLON);
+        $condition = $this->expression();
+        $this->consume(TokenType::SEMICOLON);
+        $increment = $this->assignStatement();
+        $statement = $this->statementOrBlock();
+
+        return new ForStatement($initialization, $condition, $increment, $statement);
+    }
+
+    private function assignStatement(): Statement
+    {
+        // IDENT EQ
+        $current = $this->peek(0);
+        if ($this->match(TokenType::IDENT) && $this->peek(0)->getType() == TokenType::EQ) {
+            $variable = $current->getText();
+            $this->consume(TokenType::EQ);
+
+            return new AssignmentStatement($variable, $this->expression());
+        }
+
+        throw new RoldException('Unknown statement');
+    }
+
+    private function doWhileStatement(): Statement
+    {
+        $statement = $this->statementOrBlock();
+        $this->consume(TokenType::WHILE);
+        $condition = $this->expression();
+
+        return new DoWhileStatement($statement, $condition);
+    }
+
+    private function userFunctionStatement(): Statement
+    {
+        $name = $this->consume(TokenType::IDENT)->getText();
+        $this->consume(TokenType::LPAREN);
+        $argNames = [];
+
+        while (!$this->match(TokenType::RPAREN)) {
+            $argNames[] = $this->consume(TokenType::IDENT)->getText();
+            $this->match(TokenType::COMMA);
+        }
+
+        $body = $this->statementOrBlock();
+
+        return new UserFunctionStatement($name, $argNames, $body);
     }
 
 }
@@ -672,9 +687,6 @@ class RoldException extends \RuntimeException
 {
 
 }
-
-
-
 
 class Scanner
 {
@@ -933,12 +945,6 @@ class Scanner
     }
 }
 
-interface Statement
-{
-    public function execute();
-    public function __toString(): string;
-}
-
 class StringExpression implements Expression
 {
     private Value $val;
@@ -981,18 +987,17 @@ class StringValue implements Value
         return floatval($this->value);
     }
 
-    public function asString(): string
-    {
-        return $this->value;
-    }
-
     public function __toString(): string
     {
         return $this->asString();
     }
 
-}
+    public function asString(): string
+    {
+        return $this->value;
+    }
 
+}
 
 class Token
 {
@@ -1049,8 +1054,6 @@ class Token
 
 
 }
-
-
 
 class TokenType
 {
@@ -1144,9 +1147,6 @@ class TokenType
     }
 }
 
-
-
-
 class UnaryExpression implements Expression
 {
     private Expression $expr1;
@@ -1184,10 +1184,6 @@ class UnaryExpression implements Expression
     }
 }
 
-
-
-
-
 class UserFunctionStatement implements Statement
 {
     private string $name;
@@ -1214,7 +1210,7 @@ class UserFunctionStatement implements Statement
         }
 
         Functions::set($this->name, function (Value ...$args) {
-            for ($i=0; $i<count($this->argNames); $i++) {
+            for ($i = 0; $i < count($this->argNames); $i++) {
                 /** @TODO Нужно восстанавливать значения переменных */
                 Variables::set($this->argNames[$i], $args[$i]);
             }
@@ -1230,15 +1226,6 @@ class UserFunctionStatement implements Statement
     }
 }
 
-interface Value
-{
-    public function asNumber(): float;
-    public function asString(): string;
-    public function __toString(): string;
-}
-
-
-
 class Variables
 {
     private static array $variables = [];
@@ -1252,19 +1239,16 @@ class Variables
         return self::$variables[$key];
     }
 
-    public static function set(string $key, Value $value)
-    {
-        self::$variables[$key] = $value;
-    }
-
     public static function isExists(string $key): bool
     {
         return isset(self::$variables[$key]);
     }
+
+    public static function set(string $key, Value $value)
+    {
+        self::$variables[$key] = $value;
+    }
 }
-
-
-
 
 class WhileStatement implements Statement
 {
@@ -1302,7 +1286,6 @@ class WhileStatement implements Statement
 
 }
 
-
 class VariableExpression implements Expression
 {
     private string $name;
@@ -1329,8 +1312,6 @@ class VariableExpression implements Expression
 
 }
 
-
-
 class NumberValue implements Value
 {
     private float $value;
@@ -1349,17 +1330,16 @@ class NumberValue implements Value
         return $this->value;
     }
 
-    public function asString(): string
-    {
-        return strval($this->value);
-    }
-
     public function __toString(): string
     {
         return $this->asString();
     }
-}
 
+    public function asString(): string
+    {
+        return strval($this->value);
+    }
+}
 
 class ForStatement implements Statement
 {
@@ -1441,9 +1421,6 @@ class FunctionExpression implements Expression
     }
 }
 
-
-
-
 class ConditionalExpression implements Expression
 {
     private Expression $expr1, $expr2;
@@ -1500,14 +1477,30 @@ class ConditionalExpression implements Expression
 
         $result = false;
         switch ($this->operation) {
-            case '==': $result = ($num1 === $num2); break;
-            case '!=': $result = ($num1 !== $num2); break;
-            case '>': $result = ($num1 > $num2); break;
-            case '>=': $result = ($num1 >= $num2); break;
-            case '<': $result = ($num1 < $num2); break;
-            case '<=': $result = ($num1 <= $num2); break;
-            case '&&': $result = ($num1 != 0) && ($num2 != 0); break;
-            case '||': $result = ($num1 != 0) || ($num2 != 0); break;
+            case '==':
+                $result = ($num1 === $num2);
+                break;
+            case '!=':
+                $result = ($num1 !== $num2);
+                break;
+            case '>':
+                $result = ($num1 > $num2);
+                break;
+            case '>=':
+                $result = ($num1 >= $num2);
+                break;
+            case '<':
+                $result = ($num1 < $num2);
+                break;
+            case '<=':
+                $result = ($num1 <= $num2);
+                break;
+            case '&&':
+                $result = ($num1 != 0) && ($num2 != 0);
+                break;
+            case '||':
+                $result = ($num1 != 0) || ($num2 != 0);
+                break;
             default:
                 throw new RoldException("Error expression operation: {$this->operation}");
         }
@@ -1624,7 +1617,6 @@ class AssignmentStatement implements Statement
 
 }
 
-
 class BinaryExpression implements Expression
 {
     private Expression $expr1, $expr2;
@@ -1657,7 +1649,8 @@ class BinaryExpression implements Expression
             $str1 = $val1->asString();
             $str2 = $val2->asString();
             switch ($this->operation) {
-                case '+': return new StringValue($str1 . $str2);
+                case '+':
+                    return new StringValue($str1 . $str2);
                 case '*':
                     $buf = '';
                     for ($i = 0; $i < intval($str2); $i++) {
@@ -1672,9 +1665,12 @@ class BinaryExpression implements Expression
             $num1 = $val1->asNumber();
             $num2 = $val2->asNumber();
             switch ($this->operation) {
-                case '+': return new NumberValue($num1 + $num2);
-                case '-': return new NumberValue($num1 - $num2);
-                case '*': return new NumberValue($num1 * $num2);
+                case '+':
+                    return new NumberValue($num1 + $num2);
+                case '-':
+                    return new NumberValue($num1 - $num2);
+                case '*':
+                    return new NumberValue($num1 * $num2);
                 case '/':
                     if ($num2 != 0) {
                         return new NumberValue($num1 / $num2);
@@ -1693,12 +1689,6 @@ class BinaryExpression implements Expression
     {
         return sprintf('[%s %s %s]', $this->expr1, $this->operation, $this->expr2);
     }
-}
-
-interface Expression
-{
-    public function eval(): Value;
-    public function __toString(): string;
 }
 
 class ContinueStatement extends \RuntimeException implements Statement
