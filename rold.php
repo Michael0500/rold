@@ -44,6 +44,10 @@ class Functions
     {
         if (empty(self::$functions)) {
             self::$functions = [
+                'array' => function (Value ...$args) {
+                    return new ArrayValue($args);
+                },
+
                 'echo' => function (Value ...$args) {
                     foreach ($args as $arg) {
                         echo $arg;
@@ -343,6 +347,16 @@ class Parser
         return true;
     }
 
+    private function lookMatch($position, $tokenType): bool
+    {
+        $current = $this->peek($position);
+        if ($tokenType !== $current->getType()) {
+            return false;
+        }
+
+        return true;
+    }
+
     private function peek(int $relativePos)
     {
         $pos = $this->pos + $relativePos;
@@ -542,7 +556,7 @@ class Parser
         throw new RoldException('Unknown expression');
     }
 
-    private function function (): FunctionExpression
+    private function function(): FunctionExpression
     {
         $name = $this->consume(TokenType::IDENT)->getText();
         $this->consume(TokenType::LPAREN);
@@ -623,12 +637,19 @@ class Parser
     private function assignStatement(): Statement
     {
         // IDENT EQ
-        $current = $this->peek(0);
-        if ($this->match(TokenType::IDENT) && $this->peek(0)->getType() == TokenType::EQ) {
-            $variable = $current->getText();
+        if ($this->lookMatch(0, TokenType::IDENT) && $this->lookMatch(1, TokenType::EQ)) {
+            $variable = $this->consume(TokenType::IDENT)->getText();
             $this->consume(TokenType::EQ);
 
             return new AssignmentStatement($variable, $this->expression());
+        } elseif ($this->lookMatch(0, TokenType::IDENT) && $this->lookMatch(1, TokenType::LBRACKET)) {
+            $variable = $this->consume(TokenType::IDENT)->getText(); // Имя переменной
+            $this->consume(TokenType::LBRACKET); // [
+            $index = $this->expression(); // индекс
+            $this->consume(TokenType::RBRACKET); // ]
+            $this->consume(TokenType::EQ); // =
+
+            return new ArrayAssignmentStatement($variable, $index, $this->expression());
         }
 
         throw new RoldException('Unknown statement');
@@ -708,6 +729,8 @@ class Scanner
         ')' => TokenType::RPAREN,
         '{' => TokenType::LBRACE,
         '}' => TokenType::RBRACE,
+        '[' => TokenType::LBRACKET,
+        ']' => TokenType::RBRACKET,
         ';' => TokenType::SEMICOLON,
         ',' => TokenType::COMMA,
 
@@ -1101,10 +1124,12 @@ class TokenType
     const RPAREN = 32; // )
     const LBRACE = 33; // {
     const RBRACE = 34; // }
-    const SEMICOLON = 35; // ;
-    const COMMA = 36; // ,
+    const LBRACKET = 35; // [
+    const RBRACKET = 36; // ]
+    const SEMICOLON = 37; // ;
+    const COMMA = 38; // ,
 
-    const EOF = 37;
+    const EOF = 39;
 
     public static function tokenToStr($tokenType)
     {
@@ -1145,6 +1170,8 @@ class TokenType
             self::RPAREN => 'RPAREN',
             self::LBRACE => 'LBRACE',
             self::RBRACE => 'RBRACE',
+            self::LBRACKET => 'LBRACKET',
+            self::RBRACKET => 'RBRACKET',
             self::SEMICOLON => 'SEMICOLON',
             self::COMMA => 'COMMA',
 
@@ -1366,6 +1393,46 @@ class NumberValue implements Value
     public function asString(): string
     {
         return strval($this->value);
+    }
+}
+
+class ArrayValue implements Value
+{
+    /** @var array<Value> */
+    private array $elements;
+
+    /**
+     * ArrayValue constructor.
+     * @param array<Value> $elements
+     */
+    public function __construct(array $elements)
+    {
+        $this->elements = $elements;
+    }
+
+    public function get(int $index): Value
+    {
+        return $this->elements[$index];
+    }
+
+    public function set(int $index, Value $value)
+    {
+        $this->elements[$index] = $value;
+    }
+
+    public function asNumber(): float
+    {
+        throw new RoldException('Can not convert array to number');
+    }
+
+    public function asString(): string
+    {
+        return '[' . implode(', ', $this->elements) . ']';
+    }
+
+    public function __toString(): string
+    {
+        return $this->asString();
     }
 }
 
@@ -1672,6 +1739,42 @@ class AssignmentStatement implements Statement
     public function __toString(): string
     {
         return sprintf('%s = %s', $this->variable, $this->expression);
+    }
+
+}
+
+class ArrayAssignmentStatement implements Statement
+{
+    private string $variable;
+    private Expression $index;
+    private Expression $value;
+
+    /**
+     * ArrayAssignmentStatement constructor.
+     * @param string $variable
+     * @param Expression $index
+     * @param Expression $value
+     */
+    public function __construct(string $variable, Expression $index, Expression $value)
+    {
+        $this->variable = $variable;
+        $this->index = $index;
+        $this->value = $value;
+    }
+
+    public function execute()
+    {
+        $var = Variables::get($this->variable);
+        if (!($var instanceof ArrayValue)) {
+            throw new RoldException('Array variable expected');
+        }
+        /** @var ArrayValue $var */
+        $var->set(intval($this->index->eval()->asNumber()), $this->value->eval());
+    }
+
+    public function __toString(): string
+    {
+        return sprintf('%s[%s] = %s', $this->variable, $this->index, $this->value);
     }
 
 }
