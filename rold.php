@@ -1210,11 +1210,13 @@ class UserFunctionStatement implements Statement
         }
 
         Functions::set($this->name, function (Value ...$args) {
+            Variables::save(); // сохраняем значения имеющихся переменных
             for ($i = 0; $i < count($this->argNames); $i++) {
                 /** @TODO Нужно восстанавливать значения переменных */
                 Variables::set($this->argNames[$i], $args[$i]);
             }
             $this->body->execute();
+            Variables::restore(); // восстанавливаем значения переменных
 
             return new NumberValue(0);
         });
@@ -1229,6 +1231,7 @@ class UserFunctionStatement implements Statement
 class Variables
 {
     private static array $variables = [];
+    private static array $savedVar = [];
 
     public static function get(string $key): Value
     {
@@ -1248,6 +1251,16 @@ class Variables
     {
         self::$variables[$key] = $value;
     }
+
+    public static function save()
+    {
+       self::$savedVar = self::$variables;
+    }
+
+    public static function restore()
+    {
+       self::$variables = self::$savedVar;
+    }    
 }
 
 class WhileStatement implements Statement
