@@ -376,6 +376,9 @@ class Parser
         if ($this->match(TokenType::CONTINUE)) {
             return new ContinueStatement();
         }
+        if ($this->match(TokenType::RETURN)) {
+            return new ReturnStatement($this->expression());
+        }
         // Функция как оператор
         if ($this->peek(0)->getType() == TokenType::IDENT && $this->peek(1)->getType() == TokenType::LPAREN) {
             return new FunctionStatement($this->function());
@@ -840,6 +843,9 @@ class Scanner
             case 'fn':
                 $this->addToken(TokenType::FN);
                 break;
+            case 'return':
+                $this->addToken(TokenType::RETURN);
+                break;
             default:
                 $this->addToken(TokenType::IDENT, $buf);
         }
@@ -1072,32 +1078,33 @@ class TokenType
     const BREAK = 11;
     const CONTINUE = 12;
     const FN = 13;
+    const RETURN = 14;
 
-    const PLUS = 14; // +
-    const MINUS = 15; // -
-    const STAR = 16; // *
-    const SLASH = 17; // /
-    const EQ = 18; // =
-    const EQ_EQ = 19; // ==
-    const NOT = 20; // !
-    const NOT_EQ = 21; // !=
-    const LT = 22; // <
-    const LE = 23; // <=
-    const GT = 24; // >
-    const GE = 25; // >=
-    const BAR = 26; // |
-    const BAR_BAR = 27; // ||
-    const AMP = 28; // &
-    const AMP_AMP = 29; // &&
+    const PLUS = 15; // +
+    const MINUS = 16; // -
+    const STAR = 17; // *
+    const SLASH = 18; // /
+    const EQ = 19; // =
+    const EQ_EQ = 20; // ==
+    const NOT = 21; // !
+    const NOT_EQ = 22; // !=
+    const LT = 23; // <
+    const LE = 24; // <=
+    const GT = 25; // >
+    const GE = 26; // >=
+    const BAR = 27; // |
+    const BAR_BAR = 28; // ||
+    const AMP = 29; // &
+    const AMP_AMP = 30; // &&
 
-    const LPAREN = 30; // (
-    const RPAREN = 31; // )
-    const LBRACE = 32; // {
-    const RBRACE = 33; // }
-    const SEMICOLON = 34; // ;
-    const COMMA = 35; // ,
+    const LPAREN = 31; // (
+    const RPAREN = 32; // )
+    const LBRACE = 33; // {
+    const RBRACE = 34; // }
+    const SEMICOLON = 35; // ;
+    const COMMA = 36; // ,
 
-    const EOF = 36;
+    const EOF = 37;
 
     public static function tokenToStr($tokenType)
     {
@@ -1116,6 +1123,7 @@ class TokenType
             self::BREAK => 'BREAK',
             self::CONTINUE => 'CONTINUE',
             self::FN => 'FN',
+            self::RETURN => 'RETURN',
 
             self::PLUS => 'PLUS',
             self::MINUS => 'MINUS',
@@ -1210,15 +1218,22 @@ class UserFunctionStatement implements Statement
         }
 
         Functions::set($this->name, function (Value ...$args) {
+            $result = new NumberValue(0);
+
             Variables::save(); // сохраняем значения имеющихся переменных
             for ($i = 0; $i < count($this->argNames); $i++) {
-                /** @TODO Нужно восстанавливать значения переменных */
                 Variables::set($this->argNames[$i], $args[$i]);
             }
-            $this->body->execute();
+
+            try {
+                $this->body->execute();
+            } catch (ReturnStatement $e) {
+                // если есть оператор return то возвращаем из функции его значение
+                $result = $e->getResult();
+            }
             Variables::restore(); // восстанавливаем значения переменных
 
-            return new NumberValue(0);
+            return $result;
         });
     }
 
@@ -1559,6 +1574,37 @@ class BreakStatement extends \RuntimeException implements Statement
     public function __toString(): string
     {
         return 'break';
+    }
+}
+
+class ReturnStatement extends \RuntimeException implements Statement
+{
+    private Expression $expression;
+    private Value $result;
+
+    public function __construct(Expression $expression/*, $message = "", $code = 0, \Throwable $previous = null*/)
+    {
+        $this->expression = $expression;
+    }
+
+    public function execute()
+    {
+        $this->result = $this->expression->eval();
+
+        throw $this;
+    }
+
+    /**
+     * @return Value
+     */
+    public function getResult(): Value
+    {
+        return $this->result;
+    }
+
+    public function __toString(): string
+    {
+        return 'return';
     }
 }
 
